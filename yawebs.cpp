@@ -109,7 +109,7 @@ int main(int argc, char** argv){
 	mylog(LOG_NOTICE, "Listen on ip \"%s\", port %d. Web directory is \"%s\"", ip_str, port, dir);
 	
 	int listenfd = 0;
-	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
+	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) < 0){
 		mylog(LOG_ERR, "Could not create socket");
 		exit(1);
 	}
@@ -185,8 +185,6 @@ void StartWorker(int prc_num, int socket_in){
 	
 	while(1){
 		++con_num;
-		
-		sleep(1);
 		
 		size = sock_fd_read(socket_in, buf, sizeof(buf), &fd);
 		if (size <= 0){
@@ -702,7 +700,7 @@ ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd){
             }
 
             *fd = *((int *) CMSG_DATA(cmsg));
-            if(debug_level >= 3) mylog(LOG_DEBUG, "Received fd %d\n", *fd);
+            if(debug_level >= 3) mylog(LOG_DEBUG, "Received fd socket %d\n", *fd);
         } else
             *fd = -1;
     } else {
