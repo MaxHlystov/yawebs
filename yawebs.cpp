@@ -71,7 +71,7 @@ int main(int argc, char** argv){
 	
 	res = Daemonize(dir);
 	if(res != 0){
-		if(debug_level >= 1) mylog(LOG_ERR, "Error demonizing with code %d. Finish work", res);
+		if(debug_level >= 1) criticallog("Error demonizing with code %d. Finish work", res);
 		return res;
 	}
 	
