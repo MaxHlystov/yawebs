@@ -69,23 +69,6 @@ int main(int argc, char** argv){
 	
 	if(debug_level >= 1) printf("New porcess pid is %d\n", m_pid);
 	
-	char buf[STRSIZE];
-	memset(buf, 0, STRSIZE);
-	
-	// Run only one copy of daemon
-	int lockfp = open("/tmp/yawebs.lock", O_RDWR|O_CREAT, 0640);
-	if(lockfp < 0){
-		perror("Error open file /tmp/yawebs.lock");
-		return 5;
-	}
-	if(lockf(lockfp, F_TLOCK, 0) < 0){
-		perror("Another web-sererv is working");
-		return 6;
-	}
-	
-	sprintf(buf,"%d\n", m_pid);
-	write(lockfp, buf, strlen(buf));
-	
 	res = Daemonize(dir);
 	if(res != 0){
 		if(debug_level >= 1) mylog(LOG_ERR, "Error demonizing with code %d. Finish work", res);
@@ -569,6 +552,9 @@ int is_good_web_dir(const char* dir) {
 }
 
 int Daemonize(char *dir){
+	char buf[STRSIZE];
+	memset(buf, 0, STRSIZE);
+	
 	if(debug_level >= 2) printf("Start daemonizing. See syslog to next messages.\n");
 	
 	// Go to new group
@@ -579,6 +565,14 @@ int Daemonize(char *dir){
 	int nullfd = open("/dev/null", O_RDWR);
 	dup(nullfd); // stdout
 	dup(nullfd); // stderr
+	
+	// Run only one copy of daemon
+	int lockfp = open("/tmp/yawebs.lock", O_RDWR|O_CREAT, 0640);
+	if(lockfp < 0) return 5;
+	if(lockf(lockfp, F_TLOCK, 0) < 0) return 6;
+	
+	sprintf(buf,"%d\n", m_pid);
+	write(lockfp, buf, strlen(buf));
 	
 	#ifdef USESYSLOG
 		// Strart logging to syslog
