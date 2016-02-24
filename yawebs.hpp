@@ -5,11 +5,13 @@
 
 	#define YAWEBS_HPP
 	
+	#include <stdarg.h>
 	#include <stdio.h>
 	#include <stdlib.h>
 	#include <errno.h>
 	#include <string.h>
 	#include <getopt.h>
+	#include <time.h>
 	#include <unistd.h>
 	#include <syslog.h>
 	#include <fcntl.h>
@@ -20,6 +22,8 @@
 	#include <netinet/in.h>
 	#include <arpa/inet.h>
 
+	//#define USESYSLOG
+	
 	#define VERSION "001"
 
 	#define PROCESSNUM 4
@@ -34,6 +38,10 @@
 	#define INTERNALSERVERERROR 500
 	#define NOTIMPLEMENTED 501
 
+	const char* http_header = "HTTP/1.0 %d %s\nContent-Length: %d\nConnection: close\nContent-Type: text/html\n\n";
+	const char* Forbidden_message = "<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on yawebs.\n</body></html>\n";
+	const char* NotFound_message = "<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on yawebs.\n</body></html>\n";
+	
 	struct WebExt{
 		const char *ext;
 		const char *filetype;
@@ -101,4 +109,13 @@
 	// Start working process:
 	//	watch incoming messages, and process received sockets.
 	void StartWork();
+	
+	// Logging to file or syslog (if define USESYSLOG)
+	// Args:
+	//	worker - number of worker 0..PROCESSNUM, or -1 if it is main process;
+	//	type - by priority of syslog() arg;
+	//	format,... - format string and args (analogue to printf, syslog).
+	void mylog(int type, const char* format, ...);
+	void criticallog(const char* format, ...);
+	
 #endif

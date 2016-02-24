@@ -7,19 +7,24 @@
 // 8 - soket fd passing, 9 -
 static int debug_level = 0; 
 
+pid_t m_pid = 0; // pid of master process
+
 int prc_count = 0; // Number of working processes
 pid_t prc[PROCESSNUM]; // PID's of working processes
 int out_sock[PROCESSNUM]; // out socket pair to working process
-	
+
+int worker_num = 0; // number of current worker for logging
+
+#ifndef USESYSLOG
+int logfd; // descriptors of log files of master and workers
+#endif
+
 struct WebExt extensions [] = {
 		{"gif", "image/gif" },  
 		{"jpg", "image/jpg" }, 
 		{"jpeg","image/jpeg"},
 		{"png", "image/png" },  
 		{"ico", "image/ico" },  
-		{"zip", "image/zip" },  
-		{"gz",  "image/gz"  },  
-		{"tar", "image/tar" },  
 		{"htm", "text/html" },  
 		{"html","text/html" },  
 		{0,0} };
@@ -58,18 +63,19 @@ int main(int argc, char** argv){
 	}
 	
 	// It's a new master process. Process die, viva process!
-	pid_t m_pid = getpid(); // pid of new master process
+	m_pid = getpid(); // pid of new master process
+	worker_num = -1; // worker number for master process
 	
 	if(debug_level >= 1) printf("New porcess pid is %d\n", m_pid);
 	
 	res = Daemonize(dir);
 	if(res != 0){
-		if(debug_level >= 1) syslog(LOG_ERR, "Error demonizing with code %d. Finish work", res);
+		if(debug_level >= 1) mylog(LOG_ERR, "Error demonizing with code %d. Finish work", res);
 		return res;
 	}
 	
 	// Create working process
-	syslog(LOG_NOTICE, "Going to create %d work process", PROCESSNUM);
+	mylog(LOG_NOTICE, "Going to create %d work process", PROCESSNUM);
 	
 	int sv[2]; // socket pair
 	while(prc_count < PROCESSNUM){
@@ -80,7 +86,7 @@ int main(int argc, char** argv){
 		
 		res = fork();
 		if(res == -1){
-			syslog(LOG_ERR, "Could not fork");
+			mylog(LOG_ERR, "Could not fork");
 			return 4;
 		}
 		if(res == 0){
@@ -99,11 +105,11 @@ int main(int argc, char** argv){
 	}
 	
 	// Starts listening and give out incoming sockets to work process
-	syslog(LOG_NOTICE, "Listen on ip \"%s\", port %d. Web directory is \"%s\"", ip_str, port, dir);
+	mylog(LOG_NOTICE, "Listen on ip \"%s\", port %d. Web directory is \"%s\"", ip_str, port, dir);
 	
 	int listenfd = 0;
 	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
-		syslog(LOG_ERR, "Could not create socket");
+		mylog(LOG_ERR, "Could not create socket");
 		exit(1);
 	}
 	
@@ -112,11 +118,11 @@ int main(int argc, char** argv){
 	inet_pton(AF_INET, ip_str, &serv_addr.sin_addr);
 	serv_addr.sin_port = htons(port);
 	if(bind(listenfd, (struct sockaddr *)&serv_addr,sizeof(serv_addr)) <0){
-		syslog(LOG_ERR,"Error binding socket on address %s:%d", ip_str, port);
+		mylog(LOG_ERR,"Error binding socket on address %s:%d", ip_str, port);
 		exit(1);
 	}
 	if(listen(listenfd, 0) < 0){
-		syslog(LOG_ERR, "Error listen on address %s:%d", ip_str, port);
+		mylog(LOG_ERR, "Error listen on address %s:%d", ip_str, port);
 		exit(1);
 	}
 	
@@ -126,13 +132,14 @@ int main(int argc, char** argv){
 	while(1) {
 		socklen_t length = sizeof(cli_addr);
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0){
-			syslog(LOG_ERR,"Error accepting");
+			mylog(LOG_ERR,"Error accepting");
 			exit(1);
 		}
 		
 		// Pass socket fd
 		if(debug_level >= 1){
-			syslog(LOG_DEBUG, "Accept connection socket fd is %d. Send to worker #%d with PID %d",
+			mylog(LOG_DEBUG,
+				"Accept connection socket fd is %d. Send to worker #%d with PID %d",
 				socketfd, next_proc, prc[next_proc]);
 		}
 		sock_fd_write(out_sock[next_proc], (void *)"i", 1, socketfd);
@@ -151,18 +158,25 @@ int main(int argc, char** argv){
 void EndServer(void){
 	
 	for(int i = 0; i < PROCESSNUM; ++i)	kill(prc[i], SIGTERM);
-	closelog();
 	
-	if(debug_level >= 1) syslog(LOG_NOTICE, "Daemon ends\n");
+	#ifdef USESYSLOG
+		closelog();
+	#else
+		if(logfd >= 0) close(logfd);
+	#endif
+	
+	if(debug_level >= 1) mylog(LOG_NOTICE, "Daemon ends\n");
 }
 
-void StartWorker(int prc, int socket_in){
+void StartWorker(int prc_num, int socket_in){
+	worker_num = prc_num; // save global number of process
+	
 	int fd; // socket descriptor for web-connection
     char buf[16];
     ssize_t size;
 	int con_num = 0; // connection number
 	
-	if(debug_level >= 5) syslog(LOG_DEBUG, "Worker process #%d starts with pid %, socket #%d", prc, getpid(), socket_in);
+	if(debug_level >= 5) mylog(LOG_DEBUG, "Worker process #%d starts with pid %, socket #%d", prc_num, getpid(), socket_in);
 	
 	signal(SIGTTIN,SIG_IGN);
 	signal(SIGCHLD, SIG_IGN); // if child death we need to recreate new child
@@ -175,39 +189,39 @@ void StartWorker(int prc, int socket_in){
 		
 		size = sock_fd_read(socket_in, buf, sizeof(buf), &fd);
 		if (size <= 0){
-			syslog(LOG_ERR, "Worker #%d. Error reading socket", prc);
+			mylog(LOG_ERR, "Worker #%d. Error reading socket", prc_num);
 			continue;
 		}
 		
 		if(buf[0] == 'e'){
-			syslog(LOG_DEBUG, "Worker #%d finish", prc);
+			mylog(LOG_DEBUG, "Worker #%d finish", prc_num);
 			close(socket_in);
 			exit(1);
 		}
 		
-		if (fd != -1) WebProcess(prc, con_num, fd);
+		if (fd != -1) WebProcess(prc_num, con_num, fd);
 		
 		sleep(1);
 		close(fd);
 	}
 }
 
-void WebProcess(int prc, int con_num, int fd){
+void WebProcess(int prc_num, int con_num, int fd){
 	int j, file_fd, buflen;
 	long i, ret, len;
 	char* fstr;
 	static char buffer[BUFSIZE+1];
 
 	if(debug_level >= 6) 
-		syslog(LOG_NOTICE, "Worker #%d. Incoming connection prc #%d conn #%d",	prc, con_num);
+		mylog(LOG_NOTICE, "Worker #%d. Incoming connection worker #%d conn #%d",	prc_num, con_num);
 				
 	ret = read(fd, buffer, BUFSIZE); // read Web request
 	if(ret == 0 || ret == -1) {	// read failure stop now
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
-			syslog(LOG_DEBUG,
-				"FORBIDDEN: failed to read browser request prc #%d conn #%d",
-				prc, con_num); 
+			mylog(LOG_DEBUG,
+				"FORBIDDEN: failed to read browser request worker #%d conn #%d",
+				prc_num, con_num); 
 		return;
 	}
 	if(ret > 0 && ret < BUFSIZE) // return code is valid chars
@@ -218,14 +232,14 @@ void WebProcess(int prc, int con_num, int fd){
 		if(buffer[i] == '\r' || buffer[i] == '\n') buffer[i] = '*';
 		
 	if(debug_level >= 6)
-		syslog(LOG_DEBUG, "Worker #%d conn #%d. HTTP Request: %s", prc, con_num, buffer);
+		mylog(LOG_DEBUG, "Worker #%d conn #%d. HTTP Request: %s", prc_num, con_num, buffer);
 	
 	if( strncmp(buffer, "GET ", 4) && strncmp(buffer, "get ", 4) ) {
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
-			syslog(LOG_DEBUG,
-				"FORBIDDEN: only simple GET operation supported prc #%d conn #%d",
-				prc, con_num); 
+			mylog(LOG_DEBUG,
+				"FORBIDDEN: only simple GET operation supported worker #%d conn #%d",
+				prc_num, con_num); 
 		return;
 	}
 	
@@ -239,9 +253,9 @@ void WebProcess(int prc, int con_num, int fd){
 		if(buffer[j] == '.' && buffer[j+1] == '.') {
 			WebMessage(FORBIDDEN, fd);
 			if(debug_level >= 6) 
-				syslog(LOG_DEBUG,
-					"FORBIDDEN: parent directory (..) path names not supported prc #%d conn #%d",
-					prc, con_num);
+				mylog(LOG_DEBUG,
+					"FORBIDDEN: parent directory (..) path names not supported worker #%d conn #%d",
+					prc_num, con_num);
 			return;
 		}
 	
@@ -262,22 +276,22 @@ void WebProcess(int prc, int con_num, int fd){
 	if(fstr == NULL){
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
-			syslog(LOG_DEBUG,
-				"FORBIDDEN: file extension type not supported prc #%d conn #%d",
-				prc, con_num);
+			mylog(LOG_DEBUG,
+				"FORBIDDEN: file extension type not supported worker #%d conn #%d",
+				prc_num, con_num);
 		return;
 	}
 
 	if(( file_fd = open(&buffer[5], O_RDONLY)) == -1) { // open the file for reading
 		WebMessage(NOTFOUND, fd);
 		if(debug_level >= 6)
-				syslog(LOG_DEBUG,
-					"NOT FOUND: failed to open file prc #%d conn #%d \"%s\"",
-					prc, con_num, &buffer[5]);
+				mylog(LOG_DEBUG,
+					"NOT FOUND: failed to open file worker #%d conn #%d \"%s\"",
+					prc_num, con_num, &buffer[5]);
 		return;
 	}
 	
-	if(debug_level >= 6) syslog(LOG_DEBUG, "SEND conn #%d: %s", con_num, &buffer[5]);
+	if(debug_level >= 6) mylog(LOG_DEBUG, "SEND conn #%d: %s", con_num, &buffer[5]);
 	
 	len = (long)lseek(file_fd, (off_t)0, SEEK_END); // lseek to the file end to find the length
 	      lseek(file_fd, (off_t)0, SEEK_SET); // lseek back to the file start ready for reading
@@ -285,7 +299,7 @@ void WebProcess(int prc, int con_num, int fd){
 			"HTTP/1.0 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n",
 			VERSION, len, fstr); // Header + a blank line
 			
-	if(debug_level >= 6) syslog(LOG_DEBUG, "Header conn #%d: %s", con_num, buffer);
+	if(debug_level >= 6) mylog(LOG_DEBUG, "Header conn #%d: %s", con_num, buffer);
 	
 	write(fd, buffer, strlen(buffer));
 
@@ -296,12 +310,18 @@ void WebProcess(int prc, int con_num, int fd){
 }
 
 void WebMessage(int type, int socket_fd){
+	char logbuffer[BUFSIZE];
+	
 	switch (type) {
-	case FORBIDDEN: 
-		write(socket_fd, "HTTP/1.0 403 Forbidden\nContent-Length: 185\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on this simple static file webserver.\n</body></html>\n", 271);
+	case FORBIDDEN:
+		sprintf(logbuffer, http_header, FORBIDDEN, "Forbidden", strlen(Forbidden_message));
+		write(socket_fd, logbuffer, strlen(logbuffer));
+		write(socket_fd, Forbidden_message, strlen(Forbidden_message));
 		break;
 	case NOTFOUND: 
-		write(socket_fd, "HTTP/1.0 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n", 224);
+		sprintf(logbuffer, http_header, NOTFOUND, "Not Found", strlen(NotFound_message));
+		write(socket_fd, logbuffer, strlen(logbuffer));
+		write(socket_fd, NotFound_message, strlen(NotFound_message));
 		break;
 	}	
 }
@@ -553,11 +573,15 @@ int Daemonize(char *dir){
 	dup(nullfd); // stdout
 	dup(nullfd); // stderr
 	
-	// Strart logging to syslog
-	setlogmask (LOG_UPTO (LOG_DEBUG));
-	openlog ("yawebs", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	#ifdef USESYSLOG
+		// Strart logging to syslog
+		setlogmask (LOG_UPTO (LOG_DEBUG));
+		openlog ("yawebs", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	#else
+		logfd = -1;
+	#endif
 	
-	syslog(LOG_NOTICE, "Yawebs started with PID %d.", m_pid); // LOG_ERR,LOG_WARNING,LOG_NOTICE,LOG_INFO,LOG_DEBUG
+	mylog(LOG_NOTICE, "Yawebs started with PID %d.", m_pid); // LOG_ERR,LOG_WARNING,LOG_NOTICE,LOG_INFO,LOG_DEBUG
 	
 	// Manage to signals
 	signal(SIGHUP,SIG_IGN);
@@ -569,7 +593,7 @@ int Daemonize(char *dir){
 
 	umask(027); // for more safety
 	
-	if(debug_level >= 2) syslog(LOG_DEBUG, "Finish daemonization.\n");
+	if(debug_level >= 2) mylog(LOG_DEBUG, "Finish daemonization.\n");
 	
 	return 0;
 }
@@ -577,11 +601,11 @@ int Daemonize(char *dir){
 void master_signal_handler(int sig){
 	switch(sig){
 		case SIGCHLD:
-			syslog(LOG_NOTICE, "Child jast has died");
+			mylog(LOG_NOTICE, "Child jast has died");
 			// make new process
 			break;
 		case SIGTERM:
-			syslog(LOG_NOTICE, "Yawebs shutdown.");
+			mylog(LOG_NOTICE, "Yawebs server shutdown.");
 			EndServer();
 			exit(0);
 			break;
@@ -591,7 +615,7 @@ void master_signal_handler(int sig){
 void worker_signal_handler(int sig){
 	switch(sig){
 		case SIGTERM:
-			syslog(LOG_NOTICE, "Yawebs worker shutdown.");
+			mylog(LOG_NOTICE, "Yawebs worker shutdown.");
 			exit(0);
 			break;
 	}
@@ -624,18 +648,18 @@ ssize_t sock_fd_write(int sock, void *buf, ssize_t buflen, int fd){
         cmsg->cmsg_level = SOL_SOCKET;
         cmsg->cmsg_type = SCM_RIGHTS;
 
-        if(debug_level >= 3) syslog(LOG_DEBUG, "Passing fd %d", fd);
+        if(debug_level >= 3) mylog(LOG_DEBUG, "Passing fd %d", fd);
         *((int *) CMSG_DATA(cmsg)) = fd;
     } else {
         msg.msg_control = NULL;
         msg.msg_controllen = 0;
-        syslog(LOG_ERR, "Not passing socket fd");
+        mylog(LOG_ERR, "Not passing socket fd");
     }
 
     size = sendmsg(sock, &msg, 0);
 
     if (size < 0)
-        syslog(LOG_ERR, "Error sendmsg");
+        mylog(LOG_ERR, "Error sendmsg");
     return size;
 }
 
@@ -662,32 +686,136 @@ ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd){
         msg.msg_controllen = sizeof(cmsgu.control);
         size = recvmsg (sock, &msg, 0);
         if (size < 0) {
-            syslog(LOG_ERR, "Error recieving socket");
+            mylog(LOG_ERR, "Error recieving socket");
             exit(1);
         }
         cmsg = CMSG_FIRSTHDR(&msg);
         if (cmsg && cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
             if (cmsg->cmsg_level != SOL_SOCKET) {
-                syslog(LOG_ERR, "invalid cmsg_level %d\n", cmsg->cmsg_level);
+                mylog(LOG_ERR, "invalid cmsg_level %d\n", cmsg->cmsg_level);
                 exit(1);
             }
             if (cmsg->cmsg_type != SCM_RIGHTS) {
-                syslog(LOG_ERR, "invalid cmsg_type %d\n", cmsg->cmsg_type);
+                mylog(LOG_ERR, "invalid cmsg_type %d\n", cmsg->cmsg_type);
                 exit(1);
             }
 
             *fd = *((int *) CMSG_DATA(cmsg));
-            if(debug_level >= 3) syslog(LOG_DEBUG, "Received fd %d\n", *fd);
+            if(debug_level >= 3) mylog(LOG_DEBUG, "Received fd %d\n", *fd);
         } else
             *fd = -1;
     } else {
         size = read (sock, buf, bufsize);
         if (size < 0) {
-            syslog(LOG_ERR, "Error read");
+            mylog(LOG_ERR, "Error read");
             exit(1);
         }
     }
     return size;
+}
+
+void mylog(int type, const char* format, ...){
+	va_list ap;
+	va_start(ap, format);
+	
+	#ifdef USESYSLOG
+		vsyslog(type, format, ap);
+	#else
+		// write log to file
+		char logbuffer[BUFSIZE];
+		
+		pid_t pid = getpid();
+		if(logfd == -1){
+			if(worker_num == -1){
+				// this is master process
+				logfd = open("yawebs.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
+				if(logfd < 0){
+					criticallog("Error opening file \"yawebs.log\"");
+					return;	
+				}
+			}
+			else{
+				sprintf(logbuffer, "worker%d.log", worker_num);
+				logfd = open(logbuffer, O_CREAT | O_WRONLY | O_APPEND, 0644);
+				if(logfd < 0){
+					criticallog("Worker %d. Error opening file \"%s\"", worker_num, logbuffer);
+					return;	
+				}
+			}
+		}
+		
+		// Write current date and time
+		time_t now = time(0);
+		struct tm* tm_info = localtime(&now);
+		strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
+		write(logfd,logbuffer,strlen(logbuffer));
+		
+		// Write PID
+		sprintf(logbuffer, " PID %d ", pid);
+		write(logfd, logbuffer, strlen(logbuffer));
+		
+		// Write type of message
+		switch(type){
+			case LOG_DEBUG: write(logfd, "DEBUG: ", 7);
+				break;
+			case LOG_INFO: write(logfd, "INFO: ", 6);
+				break;
+			case LOG_NOTICE: write(logfd, "NOTICE: ", 8);
+				break;
+			case LOG_WARNING: write(logfd, "WARNING: ", 9);
+				break;
+			case LOG_ERR: write(logfd, "ERROR: ", 7);
+				break;
+			case LOG_CRIT: write(logfd, "CRITICAL: ", 10);
+				break;
+			default:
+				write(logfd, "CRITICAL: ", 10);
+		}
+		
+		// Write user message
+		vsprintf(logbuffer, format, ap);
+		write(logfd, logbuffer, strlen(logbuffer)); 
+		write(logfd, "\n", 1);
+		
+		close(logfd);
+		logfd = -1;
+		
+	#endif
+}
+
+void criticallog(const char* format, ...){
+	va_list ap;
+	va_start(ap, format);
+	
+	#ifdef USESYSLOG
+		vsyslog(LOG_CRIT, format, ap);
+	#else
+		// write log to file
+		char logbuffer[BUFSIZE];
+		int fd = open("critical.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
+		
+		if(fd < 0) return;	
+		
+		pid_t pid = getpid();
+		
+		// Write current date and time
+		time_t now = time(0);
+		struct tm* tm_info = localtime(&now);
+		strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
+		write(fd,logbuffer,strlen(logbuffer));
+			
+		// Write PID
+		sprintf(logbuffer, " PID %d ", pid);
+		write(fd, logbuffer, strlen(logbuffer));
+		write(fd, "CRITICAL: ", 10);
+		// Write user message
+		vsprintf(logbuffer, format, ap);
+		write(fd, logbuffer, strlen(logbuffer)); 
+		write(fd, "\n", 1);
+			
+		close(fd);
+		
+	#endif
 }
 
 Yawebs::Yawebs(char* ip_str, char* dir, int port){
