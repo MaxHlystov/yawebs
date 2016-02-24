@@ -145,7 +145,7 @@ int main(int argc, char** argv){
 		}
 		sock_fd_write(out_sock[next_proc], (void *)"i", 1, socketfd);
 		
-		//close(listenfd);
+		close(listenfd);
 		
 		++next_proc;
 		if(next_proc == PROCESSNUM) next_proc = 0;
