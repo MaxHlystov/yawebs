@@ -261,7 +261,7 @@ void WebProcess(int prc_num, int con_num, int fd){
 		}
 	
 	// cat '?' and args after it
-	for(int t = 4; t < BUFSIZE; ++t)
+	for(int t = 0; t < BUFSIZE; ++t)
 		if(buffer[t] == '?'){
 			buffer[t] = '\0';
 			break;
