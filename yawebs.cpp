@@ -5,7 +5,7 @@
 // 4 - signal check, 5 - working process creation and maintenance,
 // 6 - working process debug, 7 - socket listening debug,
 // 8 - soket fd passing, 9 -
-static int debug_level = 0; 
+static int debug_level = 20; 
 
 pid_t m_pid = 0; // pid of master process
 
@@ -258,6 +258,13 @@ void WebProcess(int prc_num, int con_num, int fd){
 					"FORBIDDEN: parent directory (..) path names not supported worker #%d conn #%d",
 					prc_num, con_num);
 			return;
+		}
+	
+	// cat '?' and args after it
+	for(int t = 4; t < BUFSIZE; ++t)
+		if(buffer[t] == '?'){
+			buffer[t] = '\0';
+			break;
 		}
 	
 	// convert no filename to index file
