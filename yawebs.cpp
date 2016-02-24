@@ -255,7 +255,7 @@ void WebProcess(int prc, int con_num, int fd){
 	for(i = 0; extensions[i].ext != 0; i++) {
 		len = strlen(extensions[i].ext);
 		if( !strncmp(&buffer[buflen-len], extensions[i].ext, len)) {
-			fstr = extensions[i].filetype;
+			fstr = (char*)extensions[i].filetype;
 			break;
 		}
 	}
@@ -457,14 +457,14 @@ int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir){
 int is_ip(const char* cs) {
 	size_t len = strlen(cs);
 	char* next = NULL;
-	const char* prev = cs;
+	char* prev = (char*)cs;
 	for (int count = 1; count <= 4; ++count){
 		int num = 0;
 		
 		num = (int)strtol(prev, &next, 0);
 
 		if(debug_level >= 2){
-			for (auto i = prev; i < next; ++i) printf("%c", *i);
+			for (char* pt = prev; pt < next; ++pt) printf("%c", *pt);
 			printf(": %d, %d\n", num, next);
 		}
 

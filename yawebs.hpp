@@ -36,7 +36,7 @@
 
 	struct WebExt{
 		const char *ext;
-		char *filetype;
+		const char *filetype;
 	};
 	
 	class Yawebs{
