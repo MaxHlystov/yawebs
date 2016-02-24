@@ -261,7 +261,7 @@ void WebProcess(int prc_num, int con_num, int fd){
 		}
 	
 	// cat '?' and args after it
-	for(int t = 0; t < BUFSIZE; ++t)
+	for(int t = 4; t < BUFSIZE; ++t)
 		if(buffer[t] == '?'){
 			buffer[t] = '\0';
 			break;
@@ -285,8 +285,8 @@ void WebProcess(int prc_num, int con_num, int fd){
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
 			mylog(LOG_DEBUG,
-				"FORBIDDEN: file extension type not supported worker #%d conn #%d",
-				prc_num, con_num);
+				"FORBIDDEN: file extension type not supported worker #%d conn #%d file %s",
+				prc_num, con_num, &buffer[5]);
 		return;
 	}
 
@@ -304,7 +304,7 @@ void WebProcess(int prc_num, int con_num, int fd){
 	len = (long)lseek(file_fd, (off_t)0, SEEK_END); // lseek to the file end to find the length
 	      lseek(file_fd, (off_t)0, SEEK_SET); // lseek back to the file start ready for reading
           sprintf(buffer,
-			"HTTP/1.0 200 OK\nServer: yawebs/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n",
+			"HTTP/1.0 200 OK\nServer: yawebs/%s\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n",
 			VERSION, len, fstr); // Header + a blank line
 			
 	if(debug_level >= 6) mylog(LOG_DEBUG, "Header conn #%d: %s", con_num, buffer);
