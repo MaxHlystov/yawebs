@@ -12,6 +12,4 @@ set (HEADERS
 set (SOURCES 
 	yawebs.cpp) 
 
-add_definitions(-std=c++11)
-
 add_executable (${PROJECT} ${HEADERS} ${SOURCES})
