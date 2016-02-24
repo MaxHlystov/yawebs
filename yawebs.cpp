@@ -69,6 +69,23 @@ int main(int argc, char** argv){
 	
 	if(debug_level >= 1) printf("New porcess pid is %d\n", m_pid);
 	
+	char buf[STRSIZE];
+	memset(buf, 0, STRSIZE);
+	
+	// Run only one copy of daemon
+	int lockfp = open("/tmp/yawebs.lock", O_RDWR|O_CREAT, 0640);
+	if(lockfp < 0){
+		perror("Error open file /tmp/yawebs.lock");
+		return 5;
+	}
+	if(lockf(lockfp, F_TLOCK, 0) < 0){
+		perror("Another web-sererv is working");
+		return 6;
+	}
+	
+	sprintf(buf,"%d\n", m_pid);
+	write(lockfp, buf, strlen(buf));
+	
 	res = Daemonize(dir);
 	if(res != 0){
 		if(debug_level >= 1) mylog(LOG_ERR, "Error demonizing with code %d. Finish work", res);
@@ -556,24 +573,6 @@ int Daemonize(char *dir){
 	
 	// Go to new group
 	setpgrp(); 
-	
-	char buf[STRSIZE];
-	memset(buf, 0, STRSIZE);
-	pid_t m_pid = getpid(); // pid of new master process
-	
-	// Run only one copy of daemon
-	int lockfp = open("/tmp/yawebs.lock", O_RDWR|O_CREAT, 0640);
-	if(lockfp < 0){
-		perror("Error open file /tmp/yawebs.lock");
-		return 1;
-	}
-	if(lockf(lockfp, F_TLOCK, 0) < 0){
-		perror("Another web-sererv is working");
-		return 2;
-	}
-	
-	sprintf(buf,"%d\n", m_pid);
-	write(lockfp, buf, strlen(buf));
 	
 	// Make it silent
 	for(int i = getdtablesize(); i>=0; --i) close(i);
