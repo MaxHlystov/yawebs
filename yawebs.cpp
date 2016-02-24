@@ -176,7 +176,7 @@ void StartWorker(int prc_num, int socket_in){
     ssize_t size;
 	int con_num = 0; // connection number
 	
-	if(debug_level >= 5) mylog(LOG_DEBUG, "Worker process #%d starts with pid %, socket #%d", prc_num, getpid(), socket_in);
+	if(debug_level >= 5) mylog(LOG_DEBUG, "Worker process #%d starts with pid %d, socket #%d", prc_num, getpid(), socket_in);
 	
 	signal(SIGTTIN,SIG_IGN);
 	signal(SIGCHLD, SIG_IGN); // if child death we need to recreate new child
@@ -213,7 +213,7 @@ void WebProcess(int prc_num, int con_num, int fd){
 	static char buffer[BUFSIZE+1];
 
 	if(debug_level >= 6) 
-		mylog(LOG_NOTICE, "Worker #%d. Incoming connection worker #%d conn #%d",	prc_num, con_num);
+		mylog(LOG_NOTICE, "Incoming connection worker #%d conn #%d",	prc_num, con_num);
 				
 	ret = read(fd, buffer, BUFSIZE); // read Web request
 	if(ret == 0 || ret == -1) {	// read failure stop now
