@@ -394,7 +394,7 @@ int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir){
 				if(debug_level >= 2) printf ("option --port with value '%s'\n", optarg);
 				portp = optarg;
 			case 4: // version
-				if(debug_level >= 2) printf("Yawebs version %d\n", VERSION);
+				if(debug_level >= 2) printf("Yawebs version %s\n", VERSION);
 				return -1;
 			case 5: // debug
 				debug_level = atoi(optarg);
