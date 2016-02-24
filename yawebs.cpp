@@ -554,6 +554,9 @@ int is_good_web_dir(const char* dir) {
 int Daemonize(char *dir){
 	if(debug_level >= 2) printf("Start daemonizing. See syslog to next messages.\n");
 	
+	// Go to new group
+	setpgrp(); 
+	
 	char buf[STRSIZE];
 	memset(buf, 0, STRSIZE);
 	pid_t m_pid = getpid(); // pid of new master process
@@ -571,9 +574,6 @@ int Daemonize(char *dir){
 	
 	sprintf(buf,"%d\n", m_pid);
 	write(lockfp, buf, strlen(buf));
-	
-	// Go to new group
-	setpgrp(); 
 	
 	// Make it silent
 	for(int i = getdtablesize(); i>=0; --i) close(i);
