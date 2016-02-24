@@ -200,7 +200,7 @@ void StartWorker(int prc_num, int socket_in){
 		
 		if (fd != -1) WebProcess(prc_num, con_num, fd);
 		
-		sleep(1);
+		//sleep(1);
 		close(fd);
 	}
 }
