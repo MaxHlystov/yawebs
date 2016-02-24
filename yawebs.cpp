@@ -297,7 +297,7 @@ void WebProcess(int prc_num, int con_num, int fd){
 	len = (long)lseek(file_fd, (off_t)0, SEEK_END); // lseek to the file end to find the length
 	      lseek(file_fd, (off_t)0, SEEK_SET); // lseek back to the file start ready for reading
           sprintf(buffer,
-			"HTTP/1.0 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n",
+			"HTTP/1.0 200 OK\nServer: yawebs/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n",
 			VERSION, len, fstr); // Header + a blank line
 			
 	if(debug_level >= 6) mylog(LOG_DEBUG, "Header conn #%d: %s", con_num, buffer);
