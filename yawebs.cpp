@@ -20,13 +20,14 @@ int logfd; // descriptors of log files of master and workers
 #endif
 
 struct WebExt extensions [] = {
-		{"gif", "image/gif" },  
-		{"jpg", "image/jpg" }, 
+		{"gif", "image/gif" },
+		{"jpg", "image/jpg" },
 		{"jpeg","image/jpeg"},
-		{"png", "image/png" },  
-		{"ico", "image/ico" },  
-		{"htm", "text/html" },  
-		{"html","text/html" },  
+		{"png", "image/png" },
+		{"ico", "image/ico" },
+		{"htm", "text/html" },
+		{"html","text/html" },
+		{"txt", "text/html" },  
 		{0,0} };
 		
 int main(int argc, char** argv){
