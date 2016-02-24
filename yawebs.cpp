@@ -493,7 +493,7 @@ int is_ip(const char* cs) {
 
 		if(debug_level >= 2){
 			for (char* pt = prev; pt < next; ++pt) printf("%c", *pt);
-			printf(": %d, %d\n", num, next);
+			printf(": %d, %s\n", num, next);
 		}
 
 		if (count == 4){
