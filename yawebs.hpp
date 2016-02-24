@@ -26,7 +26,7 @@
 	
 	#define VERSION "001"
 
-	#define PROCESSNUM 4
+	#define PROCESSNUM 8
 	
 	#define STRSIZE 256
 	#define BUFSIZE 8096
