@@ -46,8 +46,8 @@ int main(int argc, char** argv){
 	if(debug_level >= 1) printf("Start main()\n");
 	
 	
-	int res = ParseArgs_Sort(argc, argv, &ip_str, &port, &dir);
-	//int res = ParseArgs(argc, argv, &ip_str, &port, &dir);
+	//int res = ParseArgs_Short(argc, argv, &ip_str, &port, &dir);
+	int res = ParseArgs(argc, argv, &ip_str, &port, &dir);
 	if(res < 0){
 		return 1; // Error parse args
 	}
@@ -86,6 +86,10 @@ int main(int argc, char** argv){
 	}
 	
 	// Create working process
+	if(debug_level >= 1)
+		mylog(LOG_DEBUG,
+			"Starts with args: ip \"%s\", port %d.\nWeb dir is \"%s\"",
+			ip_str, port, dir);
 	mylog(LOG_NOTICE, "Going to create %d work process", PROCESSNUM);
 	
 	int sv[2]; // socket pair
@@ -414,12 +418,6 @@ void ShowHelp(void){
 }
 
 int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir){
-	if (argc < 3) {
-		fprintf(stderr, "Error: too few args!\n");
-        ShowHelp();
-		return -1;
-    }
-	
 	char* ipp = NULL;
 	char* portp = NULL;
 	char* dirp = NULL;
@@ -437,7 +435,7 @@ int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir){
         {NULL, 0, NULL, 0}
     };
     int option_index = 0;
-    while ((c = getopt_long(argc, argv, "d:h:p:d:",
+    while ((c = getopt_long(argc, argv, "vg:d:h:p:d:",
                  long_options, &option_index)) != -1) {
         int this_option_optind = optind ? optind : 1;
 		switch (c) {
@@ -479,6 +477,13 @@ int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir){
 			if(debug_level >= 2) printf ("option -d with value '%s'\n", optarg);
 			dirp = optarg;
 			break;
+		case 'g': // debug
+				debug_level = atoi(optarg);
+				if(debug_level >= 2) printf("Yawebs starts debug with debug level %d\n", debug_level);
+				break;
+		case 'v': // version
+				if(debug_level >= 2) printf("Yawebs version %s\n", VERSION);
+				return -1;
         }
     }
 	
@@ -916,7 +921,7 @@ void criticallog(const char* format, ...){
 	pthread_spin_unlock(&log_lock);
 }
 
-int ParseArgs_Sort(int argc, char** argv, char** ip_str, int* port, char**dir){
+int ParseArgs_Short(int argc, char** argv, char** ip_str, int* port, char**dir){
 	if (argc < 3) {
 		fprintf(stderr, "Error: too few args!\n");
         ShowHelp();
