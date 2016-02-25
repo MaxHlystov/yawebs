@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Start load test. We will connect to web-server 1000 times."
-maxi=1000
+maxi=100
 i=0
 while [[ $i -lt $maxi ]]
 do
