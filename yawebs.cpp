@@ -106,6 +106,8 @@ int main(int argc, char** argv){
 		}
 		
 		// Main process
+		if(debug_level >= 1) mylog(LOG_DEBUG, "Start worker with PID %d and socket %d", res, sv[0]);
+		
 		prc[prc_count] = res;
 		close(sv[1]);
         out_sock[prc_count] = sv[0];
@@ -627,6 +629,8 @@ int Daemonize(char *dir){
 	dup(nullfd); // stdout
 	dup(nullfd); // stderr
 	
+	mylog_init();
+	
 	// Run only one copy of daemon
 	int lockfp = open(LOCK_FILE_NAME, O_RDWR|O_CREAT, 0640);
 	if(lockfp < 0) return 5;
@@ -634,8 +638,6 @@ int Daemonize(char *dir){
 	
 	sprintf(buf,"%d\n", m_pid);
 	write(lockfp, buf, strlen(buf));
-	
-	mylog_init();
 	
 	mylog(LOG_NOTICE, "Yawebs started with PID %d.", m_pid); // LOG_ERR,LOG_WARNING,LOG_NOTICE,LOG_INFO,LOG_DEBUG
 	
