@@ -7,16 +7,24 @@
 // 8 - soket fd passing, 9 -
 static int debug_level = 20; 
 
+// Multiprocesses glogals for everybody
 pid_t m_pid = 0; // pid of master process
+int worker_num = 0; // number of current worker for logging. if == -1, it is master process.
 
+// Multiprocesses glogals for only master process
 int prc_count = 0; // Number of working processes
 pid_t prc[PROCESSNUM]; // PID's of working processes
 int out_sock[PROCESSNUM]; // out socket pair to working process
 
-int worker_num = 0; // number of current worker for logging
+// Multithreading globals for worker processes
+static pthread_spinlock_t log_lock; // spinlock for logging system
+static pthread_t thread[THREADNUM]; // threads
+static pthread_mutex_t q_mutex = PTHREAD_MUTEX_INITIALIZER; // mutex for lock queue condition
+static fd_queue_type socketq; // queue of socket descriptor to process in web-threads
+static int EndThreadsFlag = 0; // If worker set value to 1, all threads ends.
 
 #ifndef USESYSLOG
-int logfd; // descriptors of log files of master and workers
+	int logfd; // descriptors of log files of master and workers
 #endif
 
 struct WebExt extensions [] = {
@@ -158,37 +166,63 @@ int main(int argc, char** argv){
 
 void EndServer(void){
 	
+	if(debug_level >= 7) mylog(LOG_DEBUG, "Daemon is going to finish", worker_num);
+	
 	for(int i = 0; i < PROCESSNUM; ++i) kill(prc[i], SIGTERM);
 	
-	#ifdef USESYSLOG
-		closelog();
-	#else
-		if(logfd >= 0) close(logfd);
-	#endif
+	if(debug_level >= 1) mylog(LOG_NOTICE, "Daemon ends\n");
 	
 	remove(LOCK_FILE_NAME);
 	
-	if(debug_level >= 1) mylog(LOG_NOTICE, "Daemon ends\n");
+	mylog_end();
+}
+
+void EndWorker(void){
+	
+	// wait while the threads end
+	if(debug_level >= 7) mylog(LOG_DEBUG, "Worker #%d is going to finish. Wait while threads end their work", worker_num);
+	
+	for(int i = 0; i < THREADNUM; ++i) pthread_join(thread[i], NULL);
+	
+	pthread_mutex_destroy(&q_mutex);
+	
+	if(debug_level >= 7) mylog(LOG_DEBUG, "Worker %d ends", worker_num);
+	mylog_end();
 }
 
 void StartWorker(int prc_num, int socket_in){
 	worker_num = prc_num; // save global number of process
-	logfd = -1; // 
+	mylog_init();
 	
 	int fd; // socket descriptor for web-connection
     char buf[16];
     ssize_t size;
-	int con_num = 0; // connection number
-	
+		
 	if(debug_level >= 5) mylog(LOG_DEBUG, "Worker process #%d starts with pid %d, socket #%d", prc_num, getpid(), socket_in);
 	
 	signal(SIGTTIN,SIG_IGN);
 	signal(SIGCHLD, SIG_IGN); // if child death we need to recreate new child
 	signal(SIGTERM, worker_signal_handler);
 	
-	while(1){
-		++con_num;
+	// Initialize threads
+	if(debug_level >= 5) mylog(LOG_DEBUG, "Create threads");
+	
+	pthread_mutex_init(&q_mutex, NULL);
+	struct webthreadargs thrd_args[THREADNUM]; // arguments to pass to thread function
+	
+	for(int i = 0; i < THREADNUM; ++i){
+		thrd_args[i].thrd_num = i;
+		int res = pthread_create(&thread[i], NULL, Thread_WebProcess, (void *) &thrd_args[i]);
+		if(res != 0){
+			mylog(LOG_CRIT, "Error creating thread %d. Ends work!", i);
+			exit(5);
+		}
 		
+		if(debug_level >= 5) mylog(LOG_DEBUG, "Thread %d created.", i);
+	}
+	
+	// Main worker cycle: get incoming socket and sent to threads
+	while(1){
 		size = sock_fd_read(socket_in, buf, sizeof(buf), &fd);
 		if (size <= 0){
 			mylog(LOG_ERR, "Worker #%d. Error reading socket", prc_num);
@@ -196,34 +230,60 @@ void StartWorker(int prc_num, int socket_in){
 		}
 		
 		if(buf[0] == 'e'){
-			mylog(LOG_DEBUG, "Worker #%d finish", prc_num);
-			close(socket_in);
-			exit(1);
+			if(debug_level >= 5) mylog(LOG_DEBUG, "Received termination signal from main process by socket");
+			EndWorker();
+			exit(0);
 		}
 		
-		if (fd != -1) WebProcess(prc_num, con_num, fd);
+		// Set socket to queue
+		pthread_mutex_lock(&q_mutex);
+		socketq.push(fd);
+		pthread_mutex_unlock(&q_mutex);
 		
-		//sleep(1);
+	}
+}
+
+void* Thread_WebProcess(void *arg){
+	struct webthreadargs* pargs = (struct webthreadargs*)arg;
+	
+	int con_num = 0; // connection number
+	while(1){
+		if(EndThreadsFlag == 1) return 0;
+		
+		// Set socket to queue
+		int fd = -1;
+		pthread_mutex_lock(&q_mutex);
+		if(!socketq.empty()){
+			fd = socketq.front();
+			socketq.pop();
+		}
+		pthread_mutex_unlock(&q_mutex);
+		
+		if(fd == -1) continue;
+		
+		con_num++;
+		
+		WebProcess(pargs->thrd_num, con_num, fd);
 		close(fd);
 	}
 }
 
-void WebProcess(int prc_num, int con_num, int fd){
+void WebProcess(int thrd_num, int con_num, int fd){
 	int j, file_fd, buflen;
 	long i, ret, len;
 	char* fstr;
 	static char buffer[BUFSIZE+1];
 
 	if(debug_level >= 6) 
-		mylog(LOG_NOTICE, "Incoming connection worker #%d conn #%d",	prc_num, con_num);
+		mylog(LOG_NOTICE, "Incoming connection worker #%d thread #%d conn #%d", worker_num, thrd_num, con_num);
 				
 	ret = read(fd, buffer, BUFSIZE); // read Web request
 	if(ret == 0 || ret == -1) {	// read failure stop now
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
 			mylog(LOG_DEBUG,
-				"FORBIDDEN: failed to read browser request worker #%d conn #%d",
-				prc_num, con_num); 
+				"FORBIDDEN: failed to read browser request worker #%d thread #%d conn #%d",
+				worker_num, thrd_num, con_num); 
 		return;
 	}
 	if(ret > 0 && ret < BUFSIZE) // return code is valid chars
@@ -234,14 +294,14 @@ void WebProcess(int prc_num, int con_num, int fd){
 		if(buffer[i] == '\r' || buffer[i] == '\n') buffer[i] = '*';
 		
 	if(debug_level >= 6)
-		mylog(LOG_DEBUG, "Worker #%d conn #%d. HTTP Request: %s", prc_num, con_num, buffer);
+		mylog(LOG_DEBUG, "Worker #%d thread #%d conn #%d. HTTP Request: %s", worker_num, thrd_num, con_num, buffer);
 	
 	if( strncmp(buffer, "GET ", 4) && strncmp(buffer, "get ", 4) ) {
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
 			mylog(LOG_DEBUG,
-				"FORBIDDEN: only simple GET operation supported worker #%d conn #%d",
-				prc_num, con_num); 
+				"FORBIDDEN: only simple GET operation supported worker #%d thread #%d conn #%d",
+				worker_num, thrd_num, con_num); 
 		return;
 	}
 	
@@ -256,8 +316,8 @@ void WebProcess(int prc_num, int con_num, int fd){
 			WebMessage(FORBIDDEN, fd);
 			if(debug_level >= 6) 
 				mylog(LOG_DEBUG,
-					"FORBIDDEN: parent directory (..) path names not supported worker #%d conn #%d",
-					prc_num, con_num);
+					"FORBIDDEN: parent directory (..) path names not supported worker #%d thread #%d conn #%d",
+					worker_num, thrd_num, con_num);
 			return;
 		}
 	
@@ -286,8 +346,8 @@ void WebProcess(int prc_num, int con_num, int fd){
 		WebMessage(FORBIDDEN, fd);
 		if(debug_level >= 6) 
 			mylog(LOG_DEBUG,
-				"FORBIDDEN: file extension type not supported worker #%d conn #%d file %s",
-				prc_num, con_num, &buffer[5]);
+				"FORBIDDEN: file extension type not supported worker #%d thread #%d conn #%d file %s",
+				worker_num, thrd_num, con_num, &buffer[5]);
 		return;
 	}
 
@@ -295,8 +355,8 @@ void WebProcess(int prc_num, int con_num, int fd){
 		WebMessage(NOTFOUND, fd);
 		if(debug_level >= 6)
 				mylog(LOG_DEBUG,
-					"NOT FOUND: failed to open file worker #%d conn #%d \"%s\"",
-					prc_num, con_num, &buffer[5]);
+					"NOT FOUND: failed to open file worker #%d thread #%d conn #%d \"%s\"",
+					worker_num, thrd_num, con_num, &buffer[5]);
 		return;
 	}
 	
@@ -554,7 +614,7 @@ int Daemonize(char *dir){
 	char buf[STRSIZE];
 	memset(buf, 0, STRSIZE);
 	
-	if(debug_level >= 2) printf("Start daemonizing. See syslog to next messages.\n");
+	if(debug_level >= 2) printf("Become a daemon. See syslog for the next messages.\n");
 	
 	// Go to new group
 	setpgrp(); 
@@ -573,13 +633,7 @@ int Daemonize(char *dir){
 	sprintf(buf,"%d\n", m_pid);
 	write(lockfp, buf, strlen(buf));
 	
-	#ifdef USESYSLOG
-		// Strart logging to syslog
-		setlogmask (LOG_UPTO (LOG_DEBUG));
-		openlog ("yawebs", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	#else
-		logfd = -1;
-	#endif
+	mylog_init();
 	
 	mylog(LOG_NOTICE, "Yawebs started with PID %d.", m_pid); // LOG_ERR,LOG_WARNING,LOG_NOTICE,LOG_INFO,LOG_DEBUG
 	
@@ -605,7 +659,6 @@ void master_signal_handler(int sig){
 			// make new process
 			break;
 		case SIGTERM:
-			mylog(LOG_NOTICE, "Yawebs server shutdown.");
 			EndServer();
 			exit(0);
 			break;
@@ -615,8 +668,7 @@ void master_signal_handler(int sig){
 void worker_signal_handler(int sig){
 	switch(sig){
 		case SIGTERM:
-			mylog(LOG_NOTICE, "Yawebs worker shutdown.");
-			if(logfd >= 0) close(logfd);
+			EndWorker();
 			exit(0);
 			break;
 	}
@@ -715,9 +767,56 @@ ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd){
     return size;
 }
 
+void mylog_init(void) {
+	char buf[STRSIZE];
+	
+	pthread_spin_init(&log_lock, PTHREAD_PROCESS_SHARED);
+	
+	#ifdef USESYSLOG
+		// Strart logging to syslog
+		setlogmask (LOG_UPTO (LOG_DEBUG));
+		if(worker_num == -1) openlog ("yawebs srv", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+		else {
+			sprintf(buf, "yawebs wrk#%d", worker_num);
+			openlog (buf, LOG_PID | LOG_NDELAY, LOG_DAEMON);
+		}
+	#else
+		if(worker_num == -1){
+			// this is master process
+			logfd = open("yawebs.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
+			if(logfd < 0){
+				criticallog("Error opening file \"yawebs.log\"");
+				return;	
+			}
+		}
+		else{
+			sprintf(buf, "worker%d.log", worker_num);
+			logfd = open(buf, O_CREAT | O_WRONLY | O_APPEND, 0644);
+			if(logfd < 0){
+				criticallog("Worker %d. Error opening file \"%s\"", worker_num, buf);
+				return;	
+			}
+		}
+	#endif
+}
+
+void mylog_end(void){
+	#ifdef USESYSLOG
+		closelog();
+	#else
+		if(logfd >= 0) close(logfd);
+		logfd = -1;
+	#endif
+	
+	pthread_spin_destroy(&log_lock);
+}
+
 void mylog(int type, const char* format, ...){
 	va_list ap;
 	va_start(ap, format);
+	
+	// lock logging for multithreading
+	while((pthread_spin_lock(&log_lock)) != 0);
 	
 	#ifdef USESYSLOG
 		vsyslog(type, format, ap);
@@ -727,66 +826,56 @@ void mylog(int type, const char* format, ...){
 		
 		pid_t pid = getpid();
 		if(logfd == -1){
-			if(worker_num == -1){
-				// this is master process
-				logfd = open("yawebs.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
-				if(logfd < 0){
-					criticallog("Error opening file \"yawebs.log\"");
-					return;	
-				}
-			}
-			else{
-				sprintf(logbuffer, "worker%d.log", worker_num);
-				logfd = open(logbuffer, O_CREAT | O_WRONLY | O_APPEND, 0644);
-				if(logfd < 0){
-					criticallog("Worker %d. Error opening file \"%s\"", worker_num, logbuffer);
-					return;	
-				}
-			}
+			criticallog("Error in log-file descriptor. See line below to watch log message:");
+			criticallog(format, ap);
 		}
-		
-		// Write current date and time
-		time_t now = time(0);
-		struct tm* tm_info = localtime(&now);
-		strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
-		write(logfd,logbuffer,strlen(logbuffer));
-		
-		// Write PID
-		sprintf(logbuffer, " PID %d ", pid);
-		write(logfd, logbuffer, strlen(logbuffer));
-		
-		// Write type of message
-		switch(type){
-			case LOG_DEBUG: write(logfd, "DEBUG: ", 7);
-				break;
-			case LOG_INFO: write(logfd, "INFO: ", 6);
-				break;
-			case LOG_NOTICE: write(logfd, "NOTICE: ", 8);
-				break;
-			case LOG_WARNING: write(logfd, "WARNING: ", 9);
-				break;
-			case LOG_ERR: write(logfd, "ERROR: ", 7);
-				break;
-			case LOG_CRIT: write(logfd, "CRITICAL: ", 10);
-				break;
-			default:
-				write(logfd, "CRITICAL: ", 10);
+		else{
+			// Write current date and time
+			time_t now = time(0);
+			struct tm* tm_info = localtime(&now);
+			strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
+			write(logfd,logbuffer,strlen(logbuffer));
+			
+			// Write PID
+			sprintf(logbuffer, " PID %d ", pid);
+			write(logfd, logbuffer, strlen(logbuffer));
+			
+			// Write type of message
+			switch(type){
+				case LOG_DEBUG: write(logfd, "DEBUG: ", 7);
+					break;
+				case LOG_INFO: write(logfd, "INFO: ", 6);
+					break;
+				case LOG_NOTICE: write(logfd, "NOTICE: ", 8);
+					break;
+				case LOG_WARNING: write(logfd, "WARNING: ", 9);
+					break;
+				case LOG_ERR: write(logfd, "ERROR: ", 7);
+					break;
+				case LOG_CRIT: write(logfd, "CRITICAL: ", 10);
+					break;
+				default:
+					write(logfd, "CRITICAL: ", 10);
+			}
+			
+			// Write user message
+			vsprintf(logbuffer, format, ap);
+			write(logfd, logbuffer, strlen(logbuffer)); 
+			write(logfd, "\n", 1);
+			
 		}
-		
-		// Write user message
-		vsprintf(logbuffer, format, ap);
-		write(logfd, logbuffer, strlen(logbuffer)); 
-		write(logfd, "\n", 1);
-		
-		//close(logfd);
-		//logfd = -1;
-		
 	#endif
+	
+	// unlock logging for multithreading
+	pthread_spin_unlock(&log_lock);
 }
 
 void criticallog(const char* format, ...){
 	va_list ap;
 	va_start(ap, format);
+	
+	// lock logging for multithreading
+	while((pthread_spin_lock(&log_lock)) != 0);
 	
 	#ifdef USESYSLOG
 		vsyslog(LOG_CRIT, format, ap);
@@ -795,28 +884,30 @@ void criticallog(const char* format, ...){
 		char logbuffer[BUFSIZE];
 		int fd = open("critical.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
 		
-		if(fd < 0) return;	
-		
-		pid_t pid = getpid();
-		
-		// Write current date and time
-		time_t now = time(0);
-		struct tm* tm_info = localtime(&now);
-		strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
-		write(fd,logbuffer,strlen(logbuffer));
+		if(fd >= 0){
+			pid_t pid = getpid();
 			
-		// Write PID
-		sprintf(logbuffer, " PID %d ", pid);
-		write(fd, logbuffer, strlen(logbuffer));
-		write(fd, "CRITICAL: ", 10);
-		// Write user message
-		vsprintf(logbuffer, format, ap);
-		write(fd, logbuffer, strlen(logbuffer)); 
-		write(fd, "\n", 1);
-			
-		close(fd);
-		
+			// Write current date and time
+			time_t now = time(0);
+			struct tm* tm_info = localtime(&now);
+			strftime(logbuffer, 80, "%Y:%m:%d %H:%M:%S", tm_info);
+			write(fd,logbuffer,strlen(logbuffer));
+				
+			// Write PID
+			sprintf(logbuffer, " PID %d ", pid);
+			write(fd, logbuffer, strlen(logbuffer));
+			write(fd, "CRITICAL: ", 10);
+			// Write user message
+			vsprintf(logbuffer, format, ap);
+			write(fd, logbuffer, strlen(logbuffer)); 
+			write(fd, "\n", 1);
+				
+			close(fd);
+		}
 	#endif
+	
+	// unlock logging for multithreading
+	pthread_spin_unlock(&log_lock);
 }
 
 Yawebs::Yawebs(char* ip_str, char* dir, int port){

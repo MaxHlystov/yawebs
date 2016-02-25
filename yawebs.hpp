@@ -11,6 +11,7 @@
 	#include <errno.h>
 	#include <string.h>
 	#include <getopt.h>
+	#include <pthread.h>
 	#include <time.h>
 	#include <unistd.h>
 	#include <syslog.h>
@@ -22,6 +23,8 @@
 	#include <netinet/in.h>
 	#include <arpa/inet.h>
 
+	#include <queue>
+	
 	//#define USESYSLOG
 	
 	#define VERSION "001"
@@ -29,6 +32,7 @@
 	#define LOCK_FILE_NAME "/tmp/yawebs.lock"
 	
 	#define PROCESSNUM 4
+	#define THREADNUM 2
 	
 	#define STRSIZE 256
 	#define BUFSIZE 8096
@@ -48,6 +52,13 @@
 		const char *ext;
 		const char *filetype;
 	};
+	
+	// arguments for function
+	struct webthreadargs{
+		int thrd_num; // thread number
+	};
+	
+	typedef std::queue<int> fd_queue_type; // queue for incoming socket descriptors. it reads by web-worker-threads to manage to.
 	
 	class Yawebs{
 		private:
@@ -80,6 +91,9 @@
 	// Make current process a daemon
 	int Daemonize(char* dir);
 	
+	// make some clean operations
+	void EndServer(void);
+	
 	// socket descriptor passing
 	ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd);
 	ssize_t sock_fd_write(int sock, void *buf, ssize_t buflen, int fd);
@@ -87,8 +101,21 @@
 	// Manage worker process
 	void StartWorker(int prc, int socket_in);
 	
-	void WebProcess(int prc, int con_num, int fd);
+	// make some clean operations
+	void EndWorker(void);
 	
+	// In infinit cycle try to get socket fd, and then WebProcess it
+	// *arg - is a structure webthreadargs (see above)
+	void* Thread_WebProcess(void *arg);
+	
+	// read HTTP query from socket and answer it
+	// Args:
+	//	thrd_num - number of calling thread;
+	//	con_num - number of connection of calling thread;
+	//	fd - socket descriptor.
+	void WebProcess(int thrd_num, int con_num, int fd);
+	
+	// post HTTP message to socket
 	void WebMessage(int type, int socket_fd);
 	
 	// Catch signals for master
@@ -119,5 +146,6 @@
 	//	format,... - format string and args (analogue to printf, syslog).
 	void mylog(int type, const char* format, ...);
 	void criticallog(const char* format, ...);
-	
+	void mylog_init(void);
+	void mylog_end(void);
 #endif
