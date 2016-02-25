@@ -1,7 +1,15 @@
 #!/bin/bash
 
-echo "Start load test. We will connect to web-server 1000 times."
-maxi=1000
+if [[ $# -ge 1 ]]
+then
+	maxi=$1
+else
+	maxi=1000
+fi
+
+echo "Start load test. We will connect to web-server $maxi times."
+
+
 i=0
 while [[ $i -lt $maxi ]]
 do
