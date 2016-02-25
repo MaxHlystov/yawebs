@@ -180,6 +180,8 @@ void EndServer(void){
 void EndWorker(void){
 	
 	// wait while the threads end
+	EndThreadsFlag = 1;
+	
 	if(debug_level >= 7) mylog(LOG_DEBUG, "Worker #%d is going to finish. Wait while threads end their work", worker_num);
 	
 	for(int i = 0; i < THREADNUM; ++i) pthread_join(thread[i], NULL);
