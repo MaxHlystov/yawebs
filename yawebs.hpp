@@ -84,7 +84,8 @@
 	// If error showes user a message and return -1.
 	// If success return 0.
 	int ParseArgs(int argc, char** argv, char** ip_str, int* port, char**dir);
-
+	int ParseArgs_Sort(int argc, char** argv, char** ip_str, int* port, char**dir);
+	
 	// Shows help message to user
 	void ShowHelp(void);
 	

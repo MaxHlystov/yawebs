@@ -45,7 +45,9 @@ int main(int argc, char** argv){
 	
 	if(debug_level >= 1) printf("Start main()\n");
 	
-	int res = ParseArgs(argc, argv, &ip_str, &port, &dir);
+	
+	int res = ParseArgs_Sort(argc, argv, &ip_str, &port, &dir);
+	//int res = ParseArgs(argc, argv, &ip_str, &port, &dir);
 	if(res < 0){
 		return 1; // Error parse args
 	}
@@ -912,6 +914,111 @@ void criticallog(const char* format, ...){
 	
 	// unlock logging for multithreading
 	pthread_spin_unlock(&log_lock);
+}
+
+int ParseArgs_Sort(int argc, char** argv, char** ip_str, int* port, char**dir){
+	if (argc < 3) {
+		fprintf(stderr, "Error: too few args!\n");
+        ShowHelp();
+		return -1;
+    }
+	
+	char* ipp = NULL;
+	char* portp = NULL;
+	char* dirp = NULL;
+	
+	opterr = 0; // Prevent error messages of getopt
+	
+	int c;
+    int option_index = 0;
+    while ((c = getopt(argc, argv, "vg:d:h:p:d:")) != -1) {
+        int this_option_optind = optind ? optind : 1;
+		switch (c) {
+		case 'g': // debug
+				debug_level = atoi(optarg);
+				if(debug_level >= 2) printf("Yawebs starts debug with debug level %d\n", debug_level);
+				break;
+		case 'v': // version
+				if(debug_level >= 2) printf("Yawebs version %s\n", VERSION);
+				return -1;
+		case 'p':
+			if(debug_level >= 2) printf ("option -p with value '%s'\n", optarg);
+			portp = optarg;
+			break;
+		case 'h':
+			if(debug_level >= 2) printf ("option -h with value '%s'\n", optarg);
+			ipp = optarg;
+			break;
+		case 'd':
+			if(debug_level >= 2) printf ("option -d with value '%s'\n", optarg);
+			dirp = optarg;
+			break;
+        }
+    }
+	
+    if (optind < argc) {
+		if(debug_level >= 2) {
+			printf ("non-option ARGV-elements: ");
+			while (optind < argc)
+				printf ("%s ", argv[optind++]);
+			printf ("\n");
+		}
+        ShowHelp();
+		return -1;
+    }
+	
+	if(debug_level >= 2) printf("Convert arguments\n");
+	
+	// port
+	if(portp == NULL){
+		fprintf(stderr, "You must specify port number!\n");
+		ShowHelp();
+		return -1;
+	}
+	
+	int convport = (int)strtol(portp, NULL, 0);
+	if(convport < 1 || convport > 65536){
+		fprintf(stderr, "You must specify port number in range [1, 65535]!\n");
+		return -1;
+	}
+	
+	*port = convport;
+	if(debug_level >= 2) printf("Port number %d\n", *port);
+
+	// host ip string
+	if(ipp == NULL || !is_ip(ipp)){
+		fprintf(stderr, "IP adress is not correct!\n");
+		return -1;
+	}
+	
+	size_t str_len = strlen(ipp);
+	*ip_str = (char *)malloc(str_len+1);
+	if(*ip_str == NULL){
+		fprintf(stderr, "Fail in memory alloc for ip adress string!\n");
+		return -1;
+	}
+	strncpy(*ip_str, ipp, str_len+1);
+	
+	// directory string
+	if(dirp == NULL || !is_good_web_dir(dirp)){
+		fprintf(stderr, "Directory is not correct!\n");
+		return -1;
+	}
+	
+	str_len = strlen(dirp);
+	int flAddSlash = 0;
+	if(dirp[str_len-1] != '/') flAddSlash = 1;
+	*dir = (char *)malloc(str_len + flAddSlash + 1);
+	if(*dir == NULL){
+		fprintf(stderr, "Fail in memory alloc for web-server path string!\n");
+		return -1;
+	}
+	strncpy(*dir, dirp, str_len+1);
+	if(flAddSlash){
+		(*dir)[str_len+1] = '\0';
+		(*dir)[str_len] = '/';
+	}
+	return 0;
 }
 
 Yawebs::Yawebs(char* ip_str, char* dir, int port){
