@@ -26,7 +26,9 @@
 	
 	#define VERSION "001"
 
-	#define PROCESSNUM 8
+	#define LOCK_FILE_NAME "/tmp/yawebs.lock"
+	
+	#define PROCESSNUM 4
 	
 	#define STRSIZE 256
 	#define BUFSIZE 8096

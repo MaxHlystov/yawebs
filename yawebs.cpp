@@ -158,7 +158,7 @@ int main(int argc, char** argv){
 
 void EndServer(void){
 	
-	for(int i = 0; i < PROCESSNUM; ++i)	kill(prc[i], SIGTERM);
+	for(int i = 0; i < PROCESSNUM; ++i) kill(prc[i], SIGTERM);
 	
 	#ifdef USESYSLOG
 		closelog();
@@ -166,11 +166,14 @@ void EndServer(void){
 		if(logfd >= 0) close(logfd);
 	#endif
 	
+	remove(LOCK_FILE_NAME);
+	
 	if(debug_level >= 1) mylog(LOG_NOTICE, "Daemon ends\n");
 }
 
 void StartWorker(int prc_num, int socket_in){
 	worker_num = prc_num; // save global number of process
+	logfd = -1; // 
 	
 	int fd; // socket descriptor for web-connection
     char buf[16];
@@ -309,10 +312,8 @@ void WebProcess(int prc_num, int con_num, int fd){
 	
 	write(fd, buffer, strlen(buffer));
 
-	/* send file in 8KB block - last block may be smaller */
-	while (	(ret = read(file_fd, buffer, BUFSIZE)) > 0 ) {
-		write(fd, buffer, ret);
-	}
+	// send file
+	while((ret = read(file_fd, buffer, BUFSIZE)) > 0) write(fd, buffer, ret);
 }
 
 void WebMessage(int type, int socket_fd){
@@ -565,7 +566,7 @@ int Daemonize(char *dir){
 	dup(nullfd); // stderr
 	
 	// Run only one copy of daemon
-	int lockfp = open("/tmp/yawebs.lock", O_RDWR|O_CREAT, 0640);
+	int lockfp = open(LOCK_FILE_NAME, O_RDWR|O_CREAT, 0640);
 	if(lockfp < 0) return 5;
 	if(lockf(lockfp, F_TLOCK, 0) < 0) return 6;
 	
@@ -615,6 +616,7 @@ void worker_signal_handler(int sig){
 	switch(sig){
 		case SIGTERM:
 			mylog(LOG_NOTICE, "Yawebs worker shutdown.");
+			if(logfd >= 0) close(logfd);
 			exit(0);
 			break;
 	}
@@ -776,8 +778,8 @@ void mylog(int type, const char* format, ...){
 		write(logfd, logbuffer, strlen(logbuffer)); 
 		write(logfd, "\n", 1);
 		
-		close(logfd);
-		logfd = -1;
+		//close(logfd);
+		//logfd = -1;
 		
 	#endif
 }
