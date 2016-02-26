@@ -5,7 +5,7 @@
 // 4 - signal check, 5 - working process creation and maintenance,
 // 6 - working process debug, 7 - socket listening debug,
 // 8 - soket fd passing, 9 -
-static int debug_level = 20; 
+static int debug_level = 0; // debug turned off by default
 
 // Multiprocesses globals for everybody
 static pid_t m_pid = 0; // PID of master process
