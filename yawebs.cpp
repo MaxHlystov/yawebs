@@ -7,14 +7,15 @@
 // 8 - soket fd passing, 9 -
 static int debug_level = 20; 
 
-// Multiprocesses glogals for everybody
-pid_t m_pid = 0; // pid of master process
-int worker_num = 0; // number of current worker for logging. if == -1, it is master process.
+// Multiprocesses globals for everybody
+static pid_t m_pid = 0; // PID of master process
+static int worker_num = 0; // number of current worker for logging. if == -1, it is master process.
 
-// Multiprocesses glogals for only master process
-int prc_count = 0; // Number of working processes
-pid_t prc[PROCESSNUM]; // PID's of working processes
-int out_sock[PROCESSNUM]; // out socket pair to working process
+// Multiprocesses globals for only master process
+static int lockFilefd = -1; // descriptor of lock file
+static int prc_count = 0; // Number of working processes
+static pid_t prc[PROCESSNUM]; // PID's of working processes
+static int out_sock[PROCESSNUM]; // out part of socket pair with working process
 
 // Multithreading globals for worker processes
 static pthread_spinlock_t log_lock; // spinlock for logging system
@@ -76,12 +77,14 @@ int main(int argc, char** argv){
 	// It's a new master process. Process die, viva process!
 	m_pid = getpid(); // pid of new master process
 	worker_num = -1; // worker number for master process
+	memset(prc, 0, PROCESSNUM * sizeof(pid_t)); // clear worker processes pid
 	
-	if(debug_level >= 1) printf("New porcess pid is %d\n", m_pid);
+	if(debug_level >= 1) printf("Web-server process pid is %d\n", m_pid);
 	
 	res = Daemonize(dir);
 	if(res != 0){
 		if(debug_level >= 1) criticallog("Error demonizing with code %d. Finish work", res);
+		EndServer();
 		return res;
 	}
 	
@@ -95,13 +98,15 @@ int main(int argc, char** argv){
 	int sv[2]; // socket pair
 	while(prc_count < PROCESSNUM){
 		if (socketpair(AF_LOCAL, SOCK_STREAM, 0, sv) < 0) {
-			perror("socketpair");
+			mylog(LOG_ERR, "Error creating a socketpair. Finish work");
+			EndServer();
 			exit(1);
 		}
 		
 		res = fork();
 		if(res == -1){
-			mylog(LOG_ERR, "Could not fork");
+			mylog(LOG_ERR, "Could not fork worker. Finish work");
+			EndServer();
 			return 4;
 		}
 		if(res == 0){
@@ -112,11 +117,11 @@ int main(int argc, char** argv){
 		}
 		
 		// Main process
-		if(debug_level >= 1) mylog(LOG_DEBUG, "Start worker with PID %d and socket %d", res, sv[0]);
-		
 		prc[prc_count] = res;
 		close(sv[1]);
-        out_sock[prc_count] = sv[0];
+		out_sock[prc_count] = sv[0];
+		
+		mylog(LOG_NOTICE, "Start worker #%d with PID %d and communication socket %d", prc_count, res, sv[0]);
 		
 		++prc_count;
 	}
@@ -127,6 +132,7 @@ int main(int argc, char** argv){
 	int listenfd = 0;
 	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) < 0){
 		mylog(LOG_ERR, "Could not create socket");
+		EndServer();
 		exit(1);
 	}
 	
@@ -136,10 +142,12 @@ int main(int argc, char** argv){
 	serv_addr.sin_port = htons(port);
 	if(bind(listenfd, (struct sockaddr *)&serv_addr,sizeof(serv_addr)) <0){
 		mylog(LOG_ERR,"Error binding socket on address %s:%d", ip_str, port);
+		EndServer();
 		exit(1);
 	}
 	if(listen(listenfd, 0) < 0){
 		mylog(LOG_ERR, "Error listen on address %s:%d", ip_str, port);
+		EndServer();
 		exit(1);
 	}
 	
@@ -150,6 +158,7 @@ int main(int argc, char** argv){
 		socklen_t length = sizeof(cli_addr);
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0){
 			mylog(LOG_ERR,"Error accepting");
+			EndServer();
 			exit(1);
 		}
 		
@@ -161,26 +170,29 @@ int main(int argc, char** argv){
 		}
 		sock_fd_write(out_sock[next_proc], (void *)"i", 1, socketfd);
 		
-		//close(listenfd);
+		close(socketfd);
+		if(debug_level >= 1) mylog(LOG_DEBUG, "Socket fd %d closed", socketfd);
 		
 		++next_proc;
 		if(next_proc == PROCESSNUM) next_proc = 0;
 	}
 	
 	// End master process by signal, this will never run
-	
 	return 0;
 }
 
 void EndServer(void){
 	
-	if(debug_level >= 7) mylog(LOG_DEBUG, "Daemon is going to finish", worker_num);
+	if(debug_level >= 7) mylog(LOG_DEBUG, "Yawebs is going to finish", worker_num);
 	
-	for(int i = 0; i < PROCESSNUM; ++i) kill(prc[i], SIGTERM);
+	for(int i = 0; i < PROCESSNUM; ++i){
+		pid_t worker_pid = prc[i];
+		if(worker_pid != 0) kill(worker_pid, SIGTERM);
+	}
 	
-	if(debug_level >= 1) mylog(LOG_NOTICE, "Daemon ends\n");
+	if(lockFilefd >= 0) remove(LOCK_FILE_NAME);	
 	
-	remove(LOCK_FILE_NAME);
+	if(debug_level >= 1) mylog(LOG_NOTICE, "Yawebs has finished\n");
 	
 	mylog_end();
 }
@@ -197,6 +209,7 @@ void EndWorker(void){
 	pthread_mutex_destroy(&q_mutex);
 	
 	if(debug_level >= 7) mylog(LOG_DEBUG, "Worker %d ends", worker_num);
+	
 	mylog_end();
 }
 
@@ -208,7 +221,7 @@ void StartWorker(int prc_num, int socket_in){
     char buf[16];
     ssize_t size;
 		
-	if(debug_level >= 5) mylog(LOG_DEBUG, "Worker process #%d starts with pid %d, socket #%d", prc_num, getpid(), socket_in);
+	mylog(LOG_NOTICE, "Worker process #%d starts with pid %d, socket #%d", prc_num, getpid(), socket_in);
 	
 	signal(SIGTTIN,SIG_IGN);
 	signal(SIGCHLD, SIG_IGN); // if child death we need to recreate new child
@@ -225,6 +238,7 @@ void StartWorker(int prc_num, int socket_in){
 		int res = pthread_create(&thread[i], NULL, Thread_WebProcess, (void *) &thrd_args[i]);
 		if(res != 0){
 			mylog(LOG_CRIT, "Error creating thread %d. Ends work!", i);
+			EndWorker();
 			exit(5);
 		}
 		
@@ -639,12 +653,12 @@ int Daemonize(char *dir){
 	mylog_init();
 	
 	// Run only one copy of daemon
-	int lockfp = open(LOCK_FILE_NAME, O_RDWR|O_CREAT, 0640);
-	if(lockfp < 0) return 5;
-	if(lockf(lockfp, F_TLOCK, 0) < 0) return 6;
+	lockFilefd = open(LOCK_FILE_NAME, O_RDWR|O_CREAT, 0640);
+	if(lockFilefd < 0) return 5;
+	if(lockf(lockFilefd, F_TLOCK, 0) < 0) return 6;
 	
 	sprintf(buf,"%d\n", m_pid);
-	write(lockfp, buf, strlen(buf));
+	write(lockFilefd, buf, strlen(buf));
 	
 	mylog(LOG_NOTICE, "Yawebs started with PID %d.", m_pid); // LOG_ERR,LOG_WARNING,LOG_NOTICE,LOG_INFO,LOG_DEBUG
 	
@@ -717,13 +731,12 @@ ssize_t sock_fd_write(int sock, void *buf, ssize_t buflen, int fd){
     } else {
         msg.msg_control = NULL;
         msg.msg_controllen = 0;
-        mylog(LOG_ERR, "Not passing socket fd");
+		if(debug_level >= 3) mylog(LOG_DEBUG, "Send message to worker: \"%s\"", buf);
     }
 
     size = sendmsg(sock, &msg, 0);
 
-    if (size < 0)
-        mylog(LOG_ERR, "Error sendmsg");
+    if (size < 0) mylog(LOG_ERR, "Error sendmsg");
     return size;
 }
 
@@ -751,17 +764,17 @@ ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd){
         size = recvmsg (sock, &msg, 0);
         if (size < 0) {
             mylog(LOG_ERR, "Error recieving socket");
-            exit(1);
+            return 0;
         }
         cmsg = CMSG_FIRSTHDR(&msg);
         if (cmsg && cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
             if (cmsg->cmsg_level != SOL_SOCKET) {
                 mylog(LOG_ERR, "invalid cmsg_level %d\n", cmsg->cmsg_level);
-                exit(1);
+                return 0;
             }
             if (cmsg->cmsg_type != SCM_RIGHTS) {
                 mylog(LOG_ERR, "invalid cmsg_type %d\n", cmsg->cmsg_type);
-                exit(1);
+                return 0;
             }
 
             *fd = *((int *) CMSG_DATA(cmsg));
@@ -769,11 +782,12 @@ ssize_t sock_fd_read(int sock, void *buf, ssize_t bufsize, int *fd){
         } else
             *fd = -1;
     } else {
-        size = read (sock, buf, bufsize);
+        size = read(sock, buf, bufsize);
         if (size < 0) {
-            mylog(LOG_ERR, "Error read");
-            exit(1);
+            mylog(LOG_ERR, "Error read message from master process");
+            return 0;
         }
+		if(debug_level >= 3) mylog(LOG_DEBUG, "Received message from master process: \"%s\"", buf);
     }
     return size;
 }
@@ -919,111 +933,6 @@ void criticallog(const char* format, ...){
 	
 	// unlock logging for multithreading
 	pthread_spin_unlock(&log_lock);
-}
-
-int ParseArgs_Short(int argc, char** argv, char** ip_str, int* port, char**dir){
-	if (argc < 3) {
-		fprintf(stderr, "Error: too few args!\n");
-        ShowHelp();
-		return -1;
-    }
-	
-	char* ipp = NULL;
-	char* portp = NULL;
-	char* dirp = NULL;
-	
-	opterr = 0; // Prevent error messages of getopt
-	
-	int c;
-    int option_index = 0;
-    while ((c = getopt(argc, argv, "vg:d:h:p:d:")) != -1) {
-        int this_option_optind = optind ? optind : 1;
-		switch (c) {
-		case 'g': // debug
-				debug_level = atoi(optarg);
-				if(debug_level >= 2) printf("Yawebs starts debug with debug level %d\n", debug_level);
-				break;
-		case 'v': // version
-				if(debug_level >= 2) printf("Yawebs version %s\n", VERSION);
-				return -1;
-		case 'p':
-			if(debug_level >= 2) printf ("option -p with value '%s'\n", optarg);
-			portp = optarg;
-			break;
-		case 'h':
-			if(debug_level >= 2) printf ("option -h with value '%s'\n", optarg);
-			ipp = optarg;
-			break;
-		case 'd':
-			if(debug_level >= 2) printf ("option -d with value '%s'\n", optarg);
-			dirp = optarg;
-			break;
-        }
-    }
-	
-    if (optind < argc) {
-		if(debug_level >= 2) {
-			printf ("non-option ARGV-elements: ");
-			while (optind < argc)
-				printf ("%s ", argv[optind++]);
-			printf ("\n");
-		}
-        ShowHelp();
-		return -1;
-    }
-	
-	if(debug_level >= 2) printf("Convert arguments\n");
-	
-	// port
-	if(portp == NULL){
-		fprintf(stderr, "You must specify port number!\n");
-		ShowHelp();
-		return -1;
-	}
-	
-	int convport = (int)strtol(portp, NULL, 0);
-	if(convport < 1 || convport > 65536){
-		fprintf(stderr, "You must specify port number in range [1, 65535]!\n");
-		return -1;
-	}
-	
-	*port = convport;
-	if(debug_level >= 2) printf("Port number %d\n", *port);
-
-	// host ip string
-	if(ipp == NULL || !is_ip(ipp)){
-		fprintf(stderr, "IP adress is not correct!\n");
-		return -1;
-	}
-	
-	size_t str_len = strlen(ipp);
-	*ip_str = (char *)malloc(str_len+1);
-	if(*ip_str == NULL){
-		fprintf(stderr, "Fail in memory alloc for ip adress string!\n");
-		return -1;
-	}
-	strncpy(*ip_str, ipp, str_len+1);
-	
-	// directory string
-	if(dirp == NULL || !is_good_web_dir(dirp)){
-		fprintf(stderr, "Directory is not correct!\n");
-		return -1;
-	}
-	
-	str_len = strlen(dirp);
-	int flAddSlash = 0;
-	if(dirp[str_len-1] != '/') flAddSlash = 1;
-	*dir = (char *)malloc(str_len + flAddSlash + 1);
-	if(*dir == NULL){
-		fprintf(stderr, "Fail in memory alloc for web-server path string!\n");
-		return -1;
-	}
-	strncpy(*dir, dirp, str_len+1);
-	if(flAddSlash){
-		(*dir)[str_len+1] = '\0';
-		(*dir)[str_len] = '/';
-	}
-	return 0;
 }
 
 Yawebs::Yawebs(char* ip_str, char* dir, int port){
