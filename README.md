@@ -1,4 +1,4 @@
-# yawebs
+# Yawebs
 Yet another web server
 
 Yawebs is simple HTTP 1.0 server works in several process and threads.
