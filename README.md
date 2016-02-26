@@ -24,24 +24,18 @@ Compile:
 cmake .
 make
 
-Demo:
-- start demo server: ./startdemo.sh
+Demo and tests:
+- start demo server on 127.0.0.1:12345 in current dir: ./startdemo.sh
 - you cat open link in web browser: http://127.0.0.1:12345
 - in command line: curl -0 -X GET 127.0.0.1:12345
-- load test (runs curl 100 times): ./loadtest.sh
-- end demo server: ./stopdemo.sh 
+- load test runs curl 1000 times by default: ./loadtest.sh [number of tests]
+- stop demo server: ./stopdemo.sh 
 
 Usage:
 - ./final --help
 - ./final --version
 - ./final -h "ip address to listen to" -p "port" -d "path to web directory"
 To debug use option --debug 20 or -g 20
-
-Tests:
-- ./startdemo.sh - runs test server on 127.0.0.1:12345 in current directory;
-- ./loaddemo.sh - runs 1000 test connections to the server;
-- ./stopdemo.sh - stop test server.
-
 
 -----------
 In plans:
