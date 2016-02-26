@@ -31,12 +31,17 @@ Demo:
 - load test (runs curl 100 times): ./loadtest.sh
 - end demo server: ./stopdemo.sh 
 
-Useage:
+Usage:
 - ./final --help
 - ./final --version
 - ./final -h "ip address to listen to" -p "port" -d "path to web directory"
-
 To debug use option --debug 20 or -g 20
+
+Tests:
+- ./startdemo.sh - runs test server on 127.0.0.1:12345 in current directory;
+- ./loaddemo.sh - runs 1000 test connections to the server;
+- ./stopdemo.sh - stop test server.
+
 
 -----------
 In plans:
