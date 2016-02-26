@@ -34,7 +34,7 @@ Demo:
 Useage:
 - ./final --help
 - ./final --version
-- ./final -h <ip address to listen to> -p <port> -d <web directory>
+- ./final -h "ip address to listen to" -p "port" -d "path to web directory"
 
 To debug use option --debug 20 or -g 20
 
